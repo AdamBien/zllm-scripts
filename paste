@@ -1,0 +1,23 @@
+#!/usr/bin/env -S java --source 25 --enable-native-access=ALL-UNNAMED
+
+import module java.desktop;
+
+String name = MethodHandles.lookup().lookupClass().getName();
+String version = "2026-03-14.1";
+
+void main(String... args) throws Exception {
+    if (args.length > 0 && args[0].equals("-version")) {
+        IO.println(name + " " + version);
+        return;
+    }
+    if (args.length > 0 && args[0].equals("-help")) {
+        IO.println("Usage: " + name);
+        IO.println("  Prints clipboard content to stdout.");
+        IO.println("  -help     Show this help");
+        IO.println("  -version  Show version");
+        return;
+    }
+    var clipboard = Toolkit.getDefaultToolkit().getSystemClipboard();
+    var content = (String) clipboard.getData(DataFlavor.stringFlavor);
+    System.out.print(content);
+}

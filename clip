@@ -1,0 +1,50 @@
+#!/usr/bin/env -S java --source 25
+
+import module java.desktop;
+
+String name = MethodHandles.lookup().lookupClass().getName();
+String version = "2026-03-14.1";
+
+void copyToClipboard(String text) {
+    var clipboard = Toolkit.getDefaultToolkit().getSystemClipboard();
+    clipboard.setContents(new StringSelection(text), null);
+}
+
+String readStdin() {
+    var sb = new StringBuilder();
+    var scanner = new java.util.Scanner(System.in);
+    while (scanner.hasNextLine()) {
+        if (!sb.isEmpty()) sb.append('\n');
+        sb.append(scanner.nextLine());
+    }
+    return sb.toString();
+}
+
+void printUsage() {
+    IO.println("Usage: " + name + " <text> or echo 'text' | " + name);
+    IO.println("  -help  -version");
+}
+
+void main(String... args) {
+    if (args.length == 0) {
+        var input = readStdin();
+        if (input.isEmpty()) {
+            printUsage();
+            return;
+        }
+        copyToClipboard(input);
+        System.err.println("Copied to clipboard.");
+        return;
+    }
+    if (args[0].equals("-version")) {
+        IO.println(name + " " + version);
+        return;
+    }
+    if (args[0].equals("-help")) {
+        printUsage();
+        return;
+    }
+    var text = String.join(" ", args);
+    copyToClipboard(text);
+    System.err.println("Copied to clipboard.");
+}

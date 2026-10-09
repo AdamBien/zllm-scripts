@@ -1,0 +1,115 @@
+#!/usr/bin/env -S java --source 25
+
+import java.lang.invoke.MethodHandles;
+
+String appName = MethodHandles.lookup().lookupClass().getName();
+String version = "2026-03-13.1";
+
+Set<String> ALLOWED_KEYS = Set.of("name", "description", "license", "allowed-tools", "metadata", "compatibility");
+
+record ValidationResult(boolean valid, String message) {}
+
+ValidationResult validateSkill(Path skillPath) {
+    var skillMd = skillPath.resolve("SKILL.md");
+    if (!Files.exists(skillMd))
+        return new ValidationResult(false, "SKILL.md not found");
+
+    String content;
+    try {
+        content = Files.readString(skillMd);
+    } catch (IOException e) {
+        return new ValidationResult(false, "Cannot read SKILL.md: " + e.getMessage());
+    }
+
+    if (!content.startsWith("---"))
+        return new ValidationResult(false, "No YAML frontmatter found");
+
+    var matcher = Pattern.compile("^---\n(.*?)\n---", Pattern.DOTALL).matcher(content);
+    if (!matcher.find())
+        return new ValidationResult(false, "Invalid frontmatter format");
+
+    var frontmatter = parseFrontmatter(matcher.group(1));
+
+    var unexpected = new TreeSet<>(frontmatter.keySet());
+    unexpected.removeAll(ALLOWED_KEYS);
+    if (!unexpected.isEmpty())
+        return new ValidationResult(false,
+            "Unexpected key(s) in SKILL.md frontmatter: %s. Allowed properties are: %s".formatted(
+                String.join(", ", unexpected),
+                String.join(", ", new TreeSet<>(ALLOWED_KEYS))));
+
+    if (!frontmatter.containsKey("name"))
+        return new ValidationResult(false, "Missing 'name' in frontmatter");
+    if (!frontmatter.containsKey("description"))
+        return new ValidationResult(false, "Missing 'description' in frontmatter");
+
+    var skillName = frontmatter.getOrDefault("name", "").strip();
+    if (!skillName.isEmpty()) {
+        if (!skillName.matches("[a-z0-9-]+"))
+            return new ValidationResult(false, "Name '%s' should be kebab-case (lowercase letters, digits, and hyphens only)".formatted(skillName));
+        if (skillName.startsWith("-") || skillName.endsWith("-") || skillName.contains("--"))
+            return new ValidationResult(false, "Name '%s' cannot start/end with hyphen or contain consecutive hyphens".formatted(skillName));
+        if (skillName.length() > 64)
+            return new ValidationResult(false, "Name is too long (%d characters). Maximum is 64 characters.".formatted(skillName.length()));
+    }
+
+    var description = frontmatter.getOrDefault("description", "").strip();
+    if (!description.isEmpty()) {
+        if (description.contains("<") || description.contains(">"))
+            return new ValidationResult(false, "Description cannot contain angle brackets (< or >)");
+        if (description.length() > 1024)
+            return new ValidationResult(false, "Description is too long (%d characters). Maximum is 1024 characters.".formatted(description.length()));
+    }
+
+    var compatibility = frontmatter.getOrDefault("compatibility", "").strip();
+    if (!compatibility.isEmpty() && compatibility.length() > 500)
+        return new ValidationResult(false, "Compatibility is too long (%d characters). Maximum is 500 characters.".formatted(compatibility.length()));
+
+    return new ValidationResult(true, "Skill is valid!");
+}
+
+Map<String, String> parseFrontmatter(String text) {
+    var map = new LinkedHashMap<String, String>();
+    var lines = text.split("\n");
+    for (int i = 0; i < lines.length; i++) {
+        var line = lines[i];
+        if (line.isEmpty() || line.startsWith(" ") || line.startsWith("\t")) continue;
+        int colon = line.indexOf(':');
+        if (colon <= 0) continue;
+        var key = line.substring(0, colon).strip();
+        var value = line.substring(colon + 1).strip();
+        if (value.matches("[>|][+-]?")) {
+            var sb = new StringBuilder();
+            i++;
+            while (i < lines.length && (lines[i].startsWith("  ") || lines[i].startsWith("\t"))) {
+                if (!sb.isEmpty()) sb.append(' ');
+                sb.append(lines[i].strip());
+                i++;
+            }
+            i--;
+            map.put(key, sb.toString());
+        } else {
+            if ((value.startsWith("\"") && value.endsWith("\"")) ||
+                (value.startsWith("'") && value.endsWith("'")))
+                value = value.substring(1, value.length() - 1);
+            map.put(key, value);
+        }
+    }
+    return map;
+}
+
+void main(String... args) {
+    if (args.length == 0 || "-help".equals(args[0])) {
+        IO.println("Usage: %s <skill_directory>".formatted(appName));
+        IO.println("  -help     Show this help");
+        IO.println("  -version  Show version");
+        return;
+    }
+    if ("-version".equals(args[0])) {
+        IO.println(appName + " " + version);
+        return;
+    }
+    var result = validateSkill(Path.of(args[0]));
+    IO.println(result.message());
+    System.exit(result.valid() ? 0 : 1);
+}

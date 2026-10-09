@@ -1,0 +1,113 @@
+#!/usr/bin/env -S java --source 25
+
+/**
+ * Parses Claude Code skill frontmatter as specified in:
+ * @see <a href="https://code.claude.com/docs/en/skills#frontmatter-reference">Frontmatter Reference</a>
+ */
+
+import java.lang.invoke.MethodHandles;
+
+String appName = MethodHandles.lookup().lookupClass().getName();
+String version = "2026-03-17.1";
+
+Set<String> KNOWN_KEYS = Set.of(
+    "name", "description", "argument-hint",
+    "disable-model-invocation", "user-invocable",
+    "allowed-tools", "model", "context", "agent", "hooks"
+);
+
+record Skill(Map<String, String> frontmatter, String body) {}
+
+Path resolveSkillFile(String arg) {
+    var path = Path.of(arg);
+    if (Files.isRegularFile(path)) return path;
+    if (Files.isDirectory(path)) {
+        var skillMd = path.resolve("SKILL.md");
+        if (Files.exists(skillMd)) return skillMd;
+    }
+    return null;
+}
+
+Skill parseSkill(Path file) throws IOException {
+    var content = Files.readString(file);
+    if (!content.startsWith("---"))
+        return new Skill(Map.of(), content.strip());
+
+    var matcher = Pattern.compile("^---\n(.*?)\n---\n?", Pattern.DOTALL).matcher(content);
+    if (!matcher.find())
+        return new Skill(Map.of(), content.strip());
+
+    var frontmatter = parseFrontmatter(matcher.group(1));
+    var body = content.substring(matcher.end()).strip();
+    return new Skill(frontmatter, body);
+}
+
+Map<String, String> parseFrontmatter(String text) {
+    var map = new LinkedHashMap<String, String>();
+    var lines = text.split("\n");
+    for (int i = 0; i < lines.length; i++) {
+        var line = lines[i];
+        if (line.isEmpty() || line.startsWith(" ") || line.startsWith("\t")) continue;
+        int colon = line.indexOf(':');
+        if (colon <= 0) continue;
+        var key = line.substring(0, colon).strip();
+        var value = line.substring(colon + 1).strip();
+        if (value.matches("[>|][+-]?")) {
+            var sb = new StringBuilder();
+            i++;
+            while (i < lines.length && (lines[i].startsWith("  ") || lines[i].startsWith("\t"))) {
+                if (!sb.isEmpty()) sb.append(' ');
+                sb.append(lines[i].strip());
+                i++;
+            }
+            i--;
+            map.put(key, sb.toString());
+        } else {
+            if ((value.startsWith("\"") && value.endsWith("\"")) ||
+                (value.startsWith("'") && value.endsWith("'")))
+                value = value.substring(1, value.length() - 1);
+            map.put(key, value);
+        }
+    }
+    return map;
+}
+
+void printSkill(Path file, Skill skill) {
+    IO.println("file: " + file);
+    if (skill.frontmatter().isEmpty()) {
+        IO.println("(no frontmatter)");
+    } else {
+        skill.frontmatter().forEach((key, value) -> {
+            var marker = KNOWN_KEYS.contains(key) ? "" : " [unknown]";
+            IO.println(key + ": " + value + marker);
+        });
+    }
+    IO.println("body: " + skill.body().length() + " characters");
+}
+
+void main(String... args) {
+    if (args.length == 0 || "-help".equals(args[0])) {
+        IO.println("Usage: %s <skill-file-or-directory>".formatted(appName));
+        IO.println("  Loads a SKILL.md and prints its parsed frontmatter.");
+        IO.println("  Accepts a file path or a directory containing SKILL.md.");
+        IO.println("  -help     Show this help");
+        IO.println("  -version  Show version");
+        return;
+    }
+    if ("-version".equals(args[0])) {
+        IO.println(appName + " " + version);
+        return;
+    }
+    var file = resolveSkillFile(args[0]);
+    if (file == null) {
+        System.err.println("No SKILL.md found at: " + args[0]);
+        System.exit(1);
+    }
+    try {
+        var skill = parseSkill(file);
+        printSkill(file, skill);
+    } catch (IOException e) {
+        System.err.println("Cannot read " + file + ": " + e.getMessage());
+        System.exit(1);
+    }
+}

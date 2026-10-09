@@ -3,20 +3,20 @@
 interface Boundary {
 
     String NAME = MethodHandles.lookup().lookupClass().getEnclosingClass().getName();
-    String VERSION = "2026-10-09.1";
+    String VERSION = "2026-10-09.2";
 
-    static void files(List<String> args) {
+    static void search(List<String> args) {
         Log.USER.out("%s %s root=%s".formatted(NAME, VERSION, Control.root()));
         try {
             var query = parse(args);
             var scope = new Entity.Scope(Control.root(), query.all());
             var starts = Control.starts(scope, query.paths());
             var walk = Control.walk(scope, starts, query.selection());
-            var result = Control.list(scope, starts, walk, query, Log.USER::out);
+            var result = Control.search(scope, walk, query, Log.USER::out);
             Log.NOTE.out(result.summary(query));
             if (!walk.skipped().isEmpty())
                 Log.NOTE.out("skipped: " + walk.report());
-            System.exit(result.found() > 0 ? Exit.FOUND.code : Exit.NONE.code);
+            System.exit(result.matches() > 0 ? Exit.MATCH.code : Exit.NO_MATCH.code);
         } catch (SecurityException e) {
             Log.stop(e.getMessage(), Exit.DENIED);
         } catch (IllegalArgumentException | IOException e) {
@@ -25,78 +25,78 @@ interface Boundary {
     }
 
     static Entity.Query parse(List<String> args) {
-        var paths = new ArrayList<String>();
+        var positional = new ArrayList<String>();
         var globs = new ArrayList<String>();
         var excludes = new ArrayList<String>();
-        var type = Entity.Type.FILE;
-        var detailed = false;
-        var count = false;
-        var max = 1000;
+        var flags = 0;
+        var mode = Entity.Mode.LINES;
+        var context = 0;
+        var max = 200;
         var all = false;
         var tokens = Arg.expand(args);
         for (int i = 0; i < tokens.size(); i++) {
             var token = tokens.get(i);
             if (token.equals("--")) {
-                tokens.subList(i + 1, tokens.size()).forEach(rest -> classify(rest, paths, globs));
+                positional.addAll(tokens.subList(i + 1, tokens.size()));
                 break;
             }
             switch (Arg.from(token)) {
                 case HELP -> usage();
-                case SHOW_VERSION -> System.exit(Exit.FOUND.code);
-                case TYPE -> type = Entity.Type.of(Arg.value(tokens, ++i, token));
-                case LONG -> detailed = true;
-                case COUNT -> count = true;
+                case SHOW_VERSION -> System.exit(Exit.MATCH.code);
+                case GLOB -> globs.add(Arg.value(tokens, ++i, token));
                 case EXCLUDE -> excludes.add(Arg.value(tokens, ++i, token));
+                case IGNORE_CASE -> flags |= Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE;
+                case FIXED -> flags |= Pattern.LITERAL;
+                case COUNT -> mode = Entity.Mode.COUNT;
+                case FILES -> mode = Entity.Mode.FILES;
+                case CONTEXT -> context = Arg.number(tokens, ++i, token);
                 case MAX -> max = Arg.number(tokens, ++i, token);
                 case ALL -> all = true;
                 case null -> {
                     if (token.startsWith("-") && token.length() > 1)
-                        throw new IllegalArgumentException("unknown option: " + token + " (put -- before a name starting with -)");
-                    classify(token, paths, globs);
+                        throw new IllegalArgumentException("unknown option: " + token + " (put -- before a pattern starting with -)");
+                    positional.add(token);
                 }
             }
         }
-        return new Entity.Query(List.copyOf(paths), Entity.Selection.of(globs, excludes), type, detailed, count, max, all);
-    }
-
-    static void classify(String token, List<String> paths, List<String> globs) {
-        var glob = token.chars().anyMatch(c -> "*?[{".indexOf(c) >= 0);
-        if (!glob && Files.isDirectory(Path.of(token)))
-            paths.add(token);
-        else
-            globs.add(token);
+        if (positional.isEmpty())
+            usage();
+        var pattern = Pattern.compile(positional.getFirst(), flags);
+        return new Entity.Query(pattern, List.copyOf(positional.subList(1, positional.size())),
+                Entity.Selection.of(globs, excludes), mode, context, max, all);
     }
 
     static void usage() {
         Log.USER.out("""
-                Usage: %s [dir...] [glob...] [options]
-                Read-only file listing of the current directory or the given paths, confined to the project root
-                (nearest .git above the current directory).
-                Existing directories are start points, everything else is a glob; a glob without / matches the file name
-                (*.js, *.{ts,tsx}, package.json), a glob with / matches the root-relative path (src/**/test/*.js).
-                Output: sorted root-relative paths, directories end with /. Summary and skips go to stderr.
+                Usage: %s <regex> [path...] [options]
+                Read-only regex search of the current directory or the given paths, confined to the root
+                (nearest directory containing .git, at or above the current directory, otherwise the current directory).
+                Output: path:line:text, context lines as path-line-text. Summary and skips go to stderr.
 
                 Options:
                 %s
-                  --                 end of options, use before a name starting with -
+                  --                 end of options, use before a pattern starting with -
 
-                Never listed: .git, secrets (.env, *.pem, *.key, .npmrc, id_rsa, ...), paths outside the root.
+                Never searched: .git, secrets (.env, *.pem, *.key, .npmrc, id_rsa, ...), paths outside the root.
                 Skipped unless -all: node_modules, dist, target, coverage, .next, .cache, ...,
-                build and out at the root.
-                Exit: 0 found, 1 nothing found, 2 usage error, 3 denied path.
+                build and out at the root, files over 1 MiB.
+                Exit: 0 match, 1 no match, 2 usage error, 3 denied path.
                 """.formatted(NAME, Arg.usage()));
-        System.exit(Exit.FOUND.code);
+        System.exit(Exit.MATCH.code);
     }
 
     enum Arg {
         HELP("-help", "", "show this help"),
         SHOW_VERSION("-version", "", "show version"),
-        TYPE("-type", "f|d", "list files (default) or directories"),
-        LONG("-long", "", "prefix size in bytes and line count (- for binary or over 1 MiB)"),
-        COUNT("-count", "", "print the number of entries only"),
-        EXCLUDE("-exclude", "<glob>", "skip entries matching, repeatable (src/test/**)"),
-        MAX("-max", "<n>", "stop after n entries (default 1000)"),
-        ALL("-all", "", "include ignored directories; -long counts lines up to 32 MiB");
+        GLOB("-glob", "<glob>", "only files matching, repeatable; no / matches the file name (*.js, *.{ts,tsx})"),
+        EXCLUDE("-exclude", "<glob>", "skip files matching, repeatable (src/test/**)"),
+        IGNORE_CASE("-i", "", "case-insensitive"),
+        FIXED("-fixed", "", "treat the pattern as a literal string"),
+        COUNT("-count", "", "print path:count per file"),
+        FILES("-files", "", "print matching paths only"),
+        CONTEXT("-context", "<n>", "lines of context around each match"),
+        MAX("-max", "<n>", "stop after n output entries (default 200)"),
+        ALL("-all", "", "include ignored directories and files up to 32 MiB");
 
         final String option;
         final String parameter;
@@ -159,7 +159,7 @@ interface Boundary {
     }
 
     enum Exit {
-        FOUND(0), NONE(1), USAGE(2), DENIED(3);
+        MATCH(0), NO_MATCH(1), USAGE(2), DENIED(3);
 
         final int code;
 
@@ -188,50 +188,99 @@ interface Boundary {
 
 interface Control {
 
-    static Entity.Result list(Entity.Scope scope, List<Path> starts, Entity.Walk walk, Entity.Query query, Consumer<String> out) {
-        var entries = switch (query.type()) {
-            case FILE -> walk.files();
-            case DIRECTORY -> walk.directories().stream().filter(directory -> !starts.contains(directory)).toList();
-        };
-        if (query.count()) {
-            out.accept(String.valueOf(entries.size()));
-            return new Entity.Result(entries.size(), false);
+    int MAX_LINE = 20_000;
+    int EXCERPT = 300;
+
+    static Entity.Result search(Entity.Scope scope, Entity.Walk walk, Entity.Query query, Consumer<String> out) {
+        var matches = 0;
+        var files = 0;
+        var entries = 0;
+        var candidates = walk.files();
+        for (int index = 0; index < candidates.size(); index++) {
+            var file = candidates.get(index);
+            var lines = lines(scope, file, walk);
+            if (lines.isEmpty())
+                continue;
+            var hits = hits(lines.get(), query.pattern(), walk);
+            if (hits.isEmpty())
+                continue;
+            files++;
+            matches += hits.size();
+            var path = scope.relative(file);
+            var hidden = false;
+            switch (query.mode()) {
+                case FILES -> out.accept(path);
+                case COUNT -> out.accept(path + ":" + hits.size());
+                case LINES -> {
+                    var shown = hits.subList(0, Math.min(hits.size(), query.max() - entries));
+                    if (query.context() > 0 && entries > 0)
+                        out.accept("--");
+                    print(path, lines.get(), shown, Set.copyOf(hits), query, out);
+                    entries += shown.size() - 1;
+                    hidden = shown.size() < hits.size();
+                }
+            }
+            entries++;
+            if (entries >= query.max() && (hidden || index < candidates.size() - 1))
+                return new Entity.Result(matches, files, true);
         }
-        entries.stream()
-                .limit(query.max())
-                .map(entry -> line(scope, entry, query))
-                .forEach(out);
-        return new Entity.Result(entries.size(), entries.size() > query.max());
+        return new Entity.Result(matches, files, false);
     }
 
-    static String line(Entity.Scope scope, Path entry, Entity.Query query) {
-        var path = scope.relative(entry);
-        if (query.type() == Entity.Type.DIRECTORY)
-            path += "/";
-        if (!query.detailed())
-            return path;
-        if (query.type() == Entity.Type.DIRECTORY)
-            return "%10s %7s  %s".formatted("-", "-", path);
+    static void print(String path, List<String> lines, List<Integer> shown, Set<Integer> hits, Entity.Query query, Consumer<String> out) {
+        var last = -1;
+        for (var hit : shown) {
+            var from = Math.max(Math.max(0, hit - query.context()), last + 1);
+            var to = Math.min(lines.size() - 1, hit + query.context());
+            if (last >= 0 && from > last + 1)
+                out.accept("--");
+            for (int i = from; i <= to; i++) {
+                var separator = hits.contains(i) ? ":" : "-";
+                out.accept(path + separator + (i + 1) + separator + excerpt(lines.get(i), query.pattern()));
+            }
+            last = Math.max(last, to);
+        }
+    }
+
+    static String excerpt(String line, Pattern pattern) {
+        if (line.length() <= EXCERPT)
+            return line;
+        var matcher = pattern.matcher(line);
+        var start = matcher.find() ? Math.max(0, matcher.start() - EXCERPT / 3) : 0;
+        var end = Math.min(line.length(), start + EXCERPT);
+        return (start > 0 ? "…" : "") + line.substring(start, end) + (end < line.length() ? "…" : "");
+    }
+
+    static List<Integer> hits(List<String> lines, Pattern pattern, Entity.Walk walk) {
+        var hits = new ArrayList<Integer>();
+        for (int i = 0; i < lines.size(); i++) {
+            var line = lines.get(i);
+            if (line.length() > MAX_LINE) {
+                walk.skip(Entity.Skip.LONG_LINE);
+                continue;
+            }
+            if (pattern.matcher(line).find())
+                hits.add(i);
+        }
+        return hits;
+    }
+
+    static Optional<List<String>> lines(Entity.Scope scope, Path file, Entity.Walk walk) {
         try {
-            var size = Files.size(entry);
-            var lines = size > scope.sizeLimit() ? "-" : lines(entry);
-            return "%10d %7s  %s".formatted(size, lines, path);
+            if (Files.size(file) > scope.sizeLimit()) {
+                walk.skip(Entity.Skip.LARGE);
+                return Optional.empty();
+            }
+            var bytes = Files.readAllBytes(file);
+            if (Entity.Scope.binary(bytes)) {
+                walk.skip(Entity.Skip.BINARY);
+                return Optional.empty();
+            }
+            return Optional.of(new String(bytes, StandardCharsets.UTF_8).lines().toList());
         } catch (IOException e) {
-            return "%10s %7s  %s".formatted("-", "-", path);
+            walk.skip(Entity.Skip.UNREADABLE);
+            return Optional.empty();
         }
-    }
-
-    static String lines(Path file) throws IOException {
-        var bytes = Files.readAllBytes(file);
-        if (Entity.Scope.binary(bytes))
-            return "-";
-        var lines = 0;
-        for (var b : bytes)
-            if (b == '\n')
-                lines++;
-        if (bytes.length > 0 && bytes[bytes.length - 1] != '\n')
-            lines++;
-        return String.valueOf(lines);
     }
 
     // root, starts, walk and visit are shared verbatim by files and search, root and starts also by show — change them together
@@ -258,7 +307,7 @@ interface Control {
                 throw new IllegalArgumentException("not found: " + path);
             var real = candidate.toRealPath();
             if (!real.startsWith(scope.root()))
-                throw new SecurityException("outside the project root " + scope.root() + ": " + path);
+                throw new SecurityException("outside the root " + scope.root() + ": " + path);
             if (Files.isRegularFile(real) && scope.denied(real))
                 throw new SecurityException("denied (may contain secrets): " + path);
             starts.add(real);
@@ -306,24 +355,14 @@ interface Control {
 
 interface Entity {
 
-    enum Type {
-        FILE, DIRECTORY;
+    enum Mode { LINES, COUNT, FILES }
 
-        static Type of(String value) {
-            return switch (value) {
-                case "f" -> FILE;
-                case "d" -> DIRECTORY;
-                default -> throw new IllegalArgumentException("-type expects f or d, got: " + value);
-            };
-        }
-    }
+    record Query(Pattern pattern, List<String> paths, Selection selection, Mode mode, int context, int max, boolean all) {}
 
-    record Query(List<String> paths, Selection selection, Type type, boolean detailed, boolean count, int max, boolean all) {}
-
-    record Result(int found, boolean truncated) {
+    record Result(int matches, int files, boolean truncated) {
 
         String summary(Query query) {
-            var summary = "%d %s".formatted(found, query.type() == Type.FILE ? "files" : "directories");
+            var summary = "%d matching lines in %d files".formatted(matches, files);
             return truncated ? summary + " (output stopped at -max " + query.max() + ")" : summary;
         }
     }
@@ -452,5 +491,5 @@ interface Entity {
 }
 
 void main(String... args) {
-    Boundary.files(List.of(args));
+    Boundary.search(List.of(args));
 }

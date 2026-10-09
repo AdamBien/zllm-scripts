@@ -3,7 +3,7 @@
 interface Boundary {
 
     String NAME = MethodHandles.lookup().lookupClass().getEnclosingClass().getName();
-    String VERSION = "2026-10-09.1";
+    String VERSION = "2026-10-09.2";
 
     static void show(List<String> args) {
         Log.USER.out("%s %s root=%s".formatted(NAME, VERSION, Control.root()));
@@ -54,8 +54,8 @@ interface Boundary {
     static void usage() {
         Log.USER.out("""
                 Usage: %s <file...> [options]
-                Read-only, line-numbered file display confined to the project root
-                (nearest .git above the current directory).
+                Read-only, line-numbered file display confined to the root
+                (nearest directory containing .git, at or above the current directory, otherwise the current directory).
                 Output: a ==> path · N lines <== header per file, then number<TAB>text.
                 Lines over %d characters are cut with a …[+N chars] note. Truncation notes go to stderr.
 
@@ -252,7 +252,7 @@ interface Control {
                 throw new IllegalArgumentException("not found: " + path);
             var real = candidate.toRealPath();
             if (!real.startsWith(scope.root()))
-                throw new SecurityException("outside the project root " + scope.root() + ": " + path);
+                throw new SecurityException("outside the root " + scope.root() + ": " + path);
             if (Files.isRegularFile(real) && scope.denied(real))
                 throw new SecurityException("denied (may contain secrets): " + path);
             starts.add(real);

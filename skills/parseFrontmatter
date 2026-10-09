@@ -8,7 +8,7 @@
 import java.lang.invoke.MethodHandles;
 
 String appName = MethodHandles.lookup().lookupClass().getName();
-String version = "2026-03-17.1";
+String version = "2026-10-09.1";
 
 Set<String> KNOWN_KEYS = Set.of(
     "name", "description", "argument-hint",
@@ -85,7 +85,49 @@ void printSkill(Path file, Skill skill) {
     IO.println("body: " + skill.body().length() + " characters");
 }
 
+// Trace is shared verbatim by every script in this repository — change all copies together
+
+interface Trace {
+
+    Path FILE = Path.of(System.getProperty("user.home"), "zllm-scripts", "zllm-scripts-invocations.log");
+    long STARTED = System.currentTimeMillis();
+    AtomicInteger EXIT = new AtomicInteger();
+    int ARG_LIMIT = 120;
+    int LINE_LIMIT = 600;
+
+    static void invocation(String name, String version, List<String> args) {
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> append(name, version, args)));
+    }
+
+    static void exit(int code) {
+        EXIT.set(code);
+        System.exit(code);
+    }
+
+    static void append(String name, String version, List<String> args) {
+        var line = "%s pid=%d %s %s exit=%d ms=%d cwd=%s args=%s%n".formatted(
+                Instant.now(), ProcessHandle.current().pid(), name, version, EXIT.get(),
+                System.currentTimeMillis() - STARTED, Path.of("").toAbsolutePath(), quote(args));
+        try {
+            Files.createDirectories(FILE.getParent());
+            Files.writeString(FILE, line, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+        } catch (IOException | RuntimeException e) {
+            System.err.println(name + ": invocation not logged to " + FILE + ": " + e.getMessage());
+        }
+    }
+
+    static String quote(List<String> args) {
+        var quoted = args.stream()
+                .map(arg -> arg.length() > ARG_LIMIT ? arg.substring(0, ARG_LIMIT) + "..." : arg)
+                .map(arg -> arg.replace("\\", "\\\\").replace("\"", "\\\"").replaceAll("\\s", " "))
+                .map(arg -> '"' + arg + '"')
+                .collect(Collectors.joining(" "));
+        return quoted.length() > LINE_LIMIT ? quoted.substring(0, LINE_LIMIT) + "..." : quoted;
+    }
+}
+
 void main(String... args) {
+    Trace.invocation(appName, version, List.of(args));
     if (args.length == 0 || "-help".equals(args[0])) {
         IO.println("Usage: %s <skill-file-or-directory>".formatted(appName));
         IO.println("  Loads a SKILL.md and prints its parsed frontmatter.");
@@ -101,13 +143,13 @@ void main(String... args) {
     var file = resolveSkillFile(args[0]);
     if (file == null) {
         System.err.println("No SKILL.md found at: " + args[0]);
-        System.exit(1);
+        Trace.exit(1);
     }
     try {
         var skill = parseSkill(file);
         printSkill(file, skill);
     } catch (IOException e) {
         System.err.println("Cannot read " + file + ": " + e.getMessage());
-        System.exit(1);
+        Trace.exit(1);
     }
 }

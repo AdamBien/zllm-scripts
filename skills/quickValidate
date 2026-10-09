@@ -3,7 +3,7 @@
 import java.lang.invoke.MethodHandles;
 
 String appName = MethodHandles.lookup().lookupClass().getName();
-String version = "2026-03-13.1";
+String version = "2026-10-09.1";
 
 Set<String> ALLOWED_KEYS = Set.of("name", "description", "license", "allowed-tools", "metadata", "compatibility");
 
@@ -98,7 +98,49 @@ Map<String, String> parseFrontmatter(String text) {
     return map;
 }
 
+// Trace is shared verbatim by every script in this repository — change all copies together
+
+interface Trace {
+
+    Path FILE = Path.of(System.getProperty("user.home"), "zllm-scripts", "zllm-scripts-invocations.log");
+    long STARTED = System.currentTimeMillis();
+    AtomicInteger EXIT = new AtomicInteger();
+    int ARG_LIMIT = 120;
+    int LINE_LIMIT = 600;
+
+    static void invocation(String name, String version, List<String> args) {
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> append(name, version, args)));
+    }
+
+    static void exit(int code) {
+        EXIT.set(code);
+        System.exit(code);
+    }
+
+    static void append(String name, String version, List<String> args) {
+        var line = "%s pid=%d %s %s exit=%d ms=%d cwd=%s args=%s%n".formatted(
+                Instant.now(), ProcessHandle.current().pid(), name, version, EXIT.get(),
+                System.currentTimeMillis() - STARTED, Path.of("").toAbsolutePath(), quote(args));
+        try {
+            Files.createDirectories(FILE.getParent());
+            Files.writeString(FILE, line, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+        } catch (IOException | RuntimeException e) {
+            System.err.println(name + ": invocation not logged to " + FILE + ": " + e.getMessage());
+        }
+    }
+
+    static String quote(List<String> args) {
+        var quoted = args.stream()
+                .map(arg -> arg.length() > ARG_LIMIT ? arg.substring(0, ARG_LIMIT) + "..." : arg)
+                .map(arg -> arg.replace("\\", "\\\\").replace("\"", "\\\"").replaceAll("\\s", " "))
+                .map(arg -> '"' + arg + '"')
+                .collect(Collectors.joining(" "));
+        return quoted.length() > LINE_LIMIT ? quoted.substring(0, LINE_LIMIT) + "..." : quoted;
+    }
+}
+
 void main(String... args) {
+    Trace.invocation(appName, version, List.of(args));
     if (args.length == 0 || "-help".equals(args[0])) {
         IO.println("Usage: %s <skill_directory>".formatted(appName));
         IO.println("  -help     Show this help");
@@ -111,5 +153,5 @@ void main(String... args) {
     }
     var result = validateSkill(Path.of(args[0]));
     IO.println(result.message());
-    System.exit(result.valid() ? 0 : 1);
+    Trace.exit(result.valid() ? 0 : 1);
 }

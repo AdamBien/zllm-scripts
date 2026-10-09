@@ -3,9 +3,10 @@
 interface Boundary {
 
     String NAME = MethodHandles.lookup().lookupClass().getEnclosingClass().getName();
-    String VERSION = "2026-10-09.2";
+    String VERSION = "2026-10-09.3";
 
     static void search(List<String> args) {
+        Trace.invocation(NAME, VERSION, args);
         Log.USER.out("%s %s root=%s".formatted(NAME, VERSION, Control.root()));
         try {
             var query = parse(args);
@@ -16,7 +17,7 @@ interface Boundary {
             Log.NOTE.out(result.summary(query));
             if (!walk.skipped().isEmpty())
                 Log.NOTE.out("skipped: " + walk.report());
-            System.exit(result.matches() > 0 ? Exit.MATCH.code : Exit.NO_MATCH.code);
+            Log.exit(result.matches() > 0 ? Exit.MATCH : Exit.NO_MATCH);
         } catch (SecurityException e) {
             Log.stop(e.getMessage(), Exit.DENIED);
         } catch (IllegalArgumentException | IOException e) {
@@ -42,7 +43,7 @@ interface Boundary {
             }
             switch (Arg.from(token)) {
                 case HELP -> usage();
-                case SHOW_VERSION -> System.exit(Exit.MATCH.code);
+                case SHOW_VERSION -> Log.exit(Exit.MATCH);
                 case GLOB -> globs.add(Arg.value(tokens, ++i, token));
                 case EXCLUDE -> excludes.add(Arg.value(tokens, ++i, token));
                 case IGNORE_CASE -> flags |= Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE;
@@ -82,7 +83,7 @@ interface Boundary {
                 build and out at the root, files over 1 MiB.
                 Exit: 0 match, 1 no match, 2 usage error, 3 denied path.
                 """.formatted(NAME, Arg.usage()));
-        System.exit(Exit.MATCH.code);
+        Log.exit(Exit.MATCH);
     }
 
     enum Arg {
@@ -181,7 +182,11 @@ interface Boundary {
 
         static void stop(String message, Exit exit) {
             ERROR.out(message);
-            System.exit(exit.code);
+            exit(exit);
+        }
+
+        static void exit(Exit exit) {
+            Trace.exit(exit.code);
         }
     }
 }
@@ -487,6 +492,47 @@ interface Entity {
                 return false;
             return includes.isEmpty() || includes.stream().anyMatch(glob -> glob.matches(relative));
         }
+    }
+}
+
+// Trace is shared verbatim by every script in this repository — change all copies together
+
+interface Trace {
+
+    Path FILE = Path.of(System.getProperty("user.home"), "zllm-scripts", "zllm-scripts-invocations.log");
+    long STARTED = System.currentTimeMillis();
+    AtomicInteger EXIT = new AtomicInteger();
+    int ARG_LIMIT = 120;
+    int LINE_LIMIT = 600;
+
+    static void invocation(String name, String version, List<String> args) {
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> append(name, version, args)));
+    }
+
+    static void exit(int code) {
+        EXIT.set(code);
+        System.exit(code);
+    }
+
+    static void append(String name, String version, List<String> args) {
+        var line = "%s pid=%d %s %s exit=%d ms=%d cwd=%s args=%s%n".formatted(
+                Instant.now(), ProcessHandle.current().pid(), name, version, EXIT.get(),
+                System.currentTimeMillis() - STARTED, Path.of("").toAbsolutePath(), quote(args));
+        try {
+            Files.createDirectories(FILE.getParent());
+            Files.writeString(FILE, line, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+        } catch (IOException | RuntimeException e) {
+            System.err.println(name + ": invocation not logged to " + FILE + ": " + e.getMessage());
+        }
+    }
+
+    static String quote(List<String> args) {
+        var quoted = args.stream()
+                .map(arg -> arg.length() > ARG_LIMIT ? arg.substring(0, ARG_LIMIT) + "..." : arg)
+                .map(arg -> arg.replace("\\", "\\\\").replace("\"", "\\\"").replaceAll("\\s", " "))
+                .map(arg -> '"' + arg + '"')
+                .collect(Collectors.joining(" "));
+        return quoted.length() > LINE_LIMIT ? quoted.substring(0, LINE_LIMIT) + "..." : quoted;
     }
 }
 

@@ -36,13 +36,19 @@ Read-only replacements for `find`, `grep` and `cat`, for repositories and plain 
 
 - `files [dir...] [glob...]` — sorted root-relative paths; `-type d`, `-long` (size and line count), `-count`, `-exclude`
 - `search <regex> [path...]` — `path:line:text`; `-glob`, `-exclude`, `-i`, `-fixed`, `-context`, `-count`, `-files`
-- `show <file...>` — numbered lines; `-lines 120-180`, `-max`
+- `show <file...>` — numbered lines; `-lines 120-180`, `-lines 47-48,60-70` (several ranges), `-max`
 
 ### [javascript](javascript)
 
 Read-only inventory of module specifiers in JavaScript, TypeScript and HTML files — `import … from`, `export … from`, `import()`, `require()`, `importScripts()`, `<script src>`, `<link rel=stylesheet|modulepreload>`, import-map entries. Same root, secrets, ignore and size rules as `filesystem`.
 
 - `imports [path...]` — `path:line:specifier<TAB>form<TAB>kind` (kinds: bare, builtin, url, relative, absolute, alias, data); `-external` (bare and url only), `-names` (imported names or import-map target), `-package` (`lodash/debounce` → `lodash`, CDN urls → package), `-count` (per specifier, most imported first), `-files`, `-glob`, `-exclude`, `-max`, `-all`
+
+### [markdown](markdown)
+
+Read-only outline of Markdown files: headings, and with `-list` the list items that carry a bold or linked title (`18. **Title** — text` becomes `18. Title`). Fenced code is skipped. Same root, secrets and size rules as `filesystem`.
+
+- `outline <file...>` — `path:line:title`; `-depth N` (heading levels 1 to 6), `-list`, `-max`
 
 ### [clipboard](clipboard)
 
@@ -57,14 +63,14 @@ Read-only inventory of module specifiers in JavaScript, TypeScript and HTML file
 ## Install
 
 ```
-chmod +x filesystem/* javascript/* clipboard/* skills/*
-sudo cp filesystem/* javascript/* clipboard/* skills/* /usr/local/bin/
+chmod +x filesystem/* javascript/* markdown/* clipboard/* skills/*
+sudo cp filesystem/* javascript/* markdown/* clipboard/* skills/* /usr/local/bin/
 ```
 
 Symlink instead of copying to pick up edits:
 
 ```
-for s in filesystem/* javascript/* clipboard/* skills/*; do sudo ln -s "$(pwd)/$s" /usr/local/bin/; done
+for s in filesystem/* javascript/* markdown/* clipboard/* skills/*; do sudo ln -s "$(pwd)/$s" /usr/local/bin/; done
 ```
 
-Allow the read-only scripts in Claude Code permissions (e.g. `Bash(files:*)`, `Bash(search:*)`, `Bash(show:*)`, `Bash(imports:*)`) so skills use them without per-command approval.
+Allow the read-only scripts in Claude Code permissions (e.g. `Bash(files:*)`, `Bash(search:*)`, `Bash(show:*)`, `Bash(imports:*)`, `Bash(outline:*)`) so skills use them without per-command approval.

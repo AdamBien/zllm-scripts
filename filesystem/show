@@ -3,7 +3,7 @@
 interface Boundary {
 
     String NAME = MethodHandles.lookup().lookupClass().getEnclosingClass().getName();
-    String VERSION = "2026-10-09.3";
+    String VERSION = "2026-10-10.1";
 
     static void show(List<String> args) {
         Trace.invocation(NAME, VERSION, args);
@@ -26,7 +26,7 @@ interface Boundary {
 
     static Entity.Query parse(List<String> args) {
         var paths = new ArrayList<String>();
-        var range = Entity.Range.EVERYTHING;
+        var ranges = Entity.Ranges.EVERYTHING;
         var max = 500;
         var tokens = Arg.expand(args);
         for (int i = 0; i < tokens.size(); i++) {
@@ -38,7 +38,7 @@ interface Boundary {
             switch (Arg.from(token)) {
                 case HELP -> usage();
                 case SHOW_VERSION -> Log.exit(Exit.SHOWN);
-                case LINES -> range = Entity.Range.of(Arg.value(tokens, ++i, token));
+                case LINES -> ranges = Entity.Ranges.of(Arg.value(tokens, ++i, token));
                 case MAX -> max = Arg.number(tokens, ++i, token);
                 case null -> {
                     if (token.startsWith("-") && token.length() > 1)
@@ -49,7 +49,7 @@ interface Boundary {
         }
         if (paths.isEmpty())
             usage();
-        return new Entity.Query(List.copyOf(paths), range, max);
+        return new Entity.Query(List.copyOf(paths), ranges, max);
     }
 
     static void usage() {
@@ -74,7 +74,7 @@ interface Boundary {
     enum Arg {
         HELP("-help", "", "show this help"),
         SHOW_VERSION("-version", "", "show version"),
-        LINES("-lines", "<a-b|a-|a>", "show lines a to b, or from a to the end (a- and a are the same)"),
+        LINES("-lines", "<a-b|a-|a>[,...]", "show lines a to b, or from a to the end (a- and a are the same); several ranges separated by commas, e.g. 47-48,60-70"),
         MAX("-max", "<n>", "stop after n lines across all files (default 500)");
 
         final String option;
@@ -189,13 +189,13 @@ interface Control {
                 note.accept(path + ": binary, not shown");
                 continue;
             }
-            var excerpt = excerpt(file, query.range(), budget);
+            var excerpt = excerpt(file, query.ranges(), budget);
             out.accept("==> %s · %d lines <==".formatted(path, excerpt.total()));
             excerpt.lines().forEach(out);
             budget -= excerpt.lines().size();
             shown += excerpt.lines().size();
             if (excerpt.lines().isEmpty() && excerpt.total() > 0)
-                note.accept("%s: -lines %s is past the end (%d lines)".formatted(path, query.range(), excerpt.total()));
+                note.accept("%s: -lines %s is past the end (%d lines)".formatted(path, query.ranges(), excerpt.total()));
             if (excerpt.next() > 0)
                 note.accept("%s: stopped at -max %d after line %d of %d; continue with: %s %s -lines %d-"
                         .formatted(path, query.max(), excerpt.next() - 1, excerpt.total(), Boundary.NAME, path, excerpt.next()));
@@ -203,14 +203,14 @@ interface Control {
         return shown;
     }
 
-    static Entity.Excerpt excerpt(Path file, Entity.Range range, int budget) throws IOException {
+    static Entity.Excerpt excerpt(Path file, Entity.Ranges ranges, int budget) throws IOException {
         var lines = new ArrayList<String>();
         var total = 0;
         var next = 0;
         try (var reader = new BufferedReader(new InputStreamReader(Files.newInputStream(file), StandardCharsets.UTF_8))) {
             for (var line = reader.readLine(); line != null; line = reader.readLine()) {
                 total++;
-                if (!range.contains(total))
+                if (!ranges.contains(total))
                     continue;
                 if (lines.size() < budget)
                     lines.add("%6d\t%s".formatted(total, cut(line)));
@@ -293,7 +293,28 @@ interface Entity {
         }
     }
 
-    record Query(List<String> paths, Range range, int max) {}
+    record Ranges(List<Range> ranges) {
+
+        static final Ranges EVERYTHING = new Ranges(List.of(Range.EVERYTHING));
+
+        static Ranges of(String value) {
+            if (value.isBlank())
+                throw new IllegalArgumentException("-lines expects a-b, a- or a, got: " + value);
+            var ranges = Stream.of(value.split(",", -1)).map(String::strip).map(Range::of).toList();
+            return new Ranges(ranges);
+        }
+
+        boolean contains(int line) {
+            return ranges.stream().anyMatch(range -> range.contains(line));
+        }
+
+        @Override
+        public String toString() {
+            return ranges.stream().map(Range::toString).collect(Collectors.joining(","));
+        }
+    }
+
+    record Query(List<String> paths, Ranges ranges, int max) {}
 
     /// next is the first line held back by -max, 0 when nothing was held back
     record Excerpt(List<String> lines, int total, int next) {}

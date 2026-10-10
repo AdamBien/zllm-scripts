@@ -74,3 +74,9 @@ for s in filesystem/* javascript/* markdown/* clipboard/* skills/*; do sudo ln -
 ```
 
 Allow the read-only scripts in Claude Code permissions (e.g. `Bash(files:*)`, `Bash(search:*)`, `Bash(show:*)`, `Bash(imports:*)`, `Bash(outline:*)`) so skills use them without per-command approval.
+
+## Related
+
+- [airails zllm-scripts skill](https://github.com/AdamBien/airails/tree/main/java/zllm-scripts) — tells agents to call these scripts instead of OS shell commands
+- [airails.dev](https://airails.dev) — the skills that use these scripts
+- [bce.design](https://bce.design) — the Boundary-Control-Entity architecture the airails skills build on
